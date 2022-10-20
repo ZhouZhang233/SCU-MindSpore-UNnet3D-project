@@ -36,10 +36,17 @@
      ![image](image/visual_data.png)  
      
 # 3.3 参数设置（训练参数和dataloader参数）
+
 # 3.4 创建Dataloader
+
 # 3.5 构建Unet3D网络结构
+
 # 3.6 自定义Metrics
+
 # 3.7 定义损失函数
+
 # 3.8 主函数训练
+
 # 3.9 模型预测
-# 4.0 训练结果可视化
+
+# 3.10 训练结果可视化
