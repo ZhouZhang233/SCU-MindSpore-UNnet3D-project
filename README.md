@@ -145,6 +145,57 @@ class RandomCropSamples:
         return np.array(res_image), np.array(res_label)
 ``` 
 ### 3.4 创建Dataloader
+设置好数据预处理之后，接下来需要定义一个可迭代的Dataloader用于数据加载，然后送入网络
+```python
+import glob
+import mindspore.dataset as ds
+from mindspore.dataset.transforms.transforms import Compose
+import nibabel as nib
+import os
+
+class Dataset:
+    def __init__(self, data, seg):
+        self.data = data
+        self.seg = seg
+    def __len__(self):
+        return len(self.data)
+    def __getitem__(self, index):
+        data = self.data[index]
+        seg = self.seg[index]
+        return [data], [seg]
+
+def create_dataset(data_path, seg_path, rank_size=1, rank_id=0, is_training=True):
+    seg_files = sorted(glob.glob(os.path.join(seg_path, "*.nii.gz")))
+    train_files = [os.path.join(data_path, os.path.basename(seg)) for seg in seg_files]
+    train_ds = Dataset(data=train_files, seg=seg_files)
+    train_loader = ds.GeneratorDataset(train_ds, column_names=["image", "seg"], num_parallel_workers=config.num_worker, \
+                                       shuffle=is_training, num_shards=rank_size, shard_id=rank_id)
+
+    if is_training:
+        transform_image = Compose([LoadData(),
+                                   ExpandChannel(),
+                                   Orientation(),
+                                   ScaleIntensityRange(src_min=config.min_val, src_max=config.max_val, tgt_min=0.0, \
+                                                       tgt_max=1.0, is_clip=True),
+                                   RandomCropSamples(roi_size=config.roi_size, num_samples=4),
+                                   ConvertLabel(),
+                                   OneHot(num_classes=config.num_classes)])
+    else:
+        transform_image = Compose([LoadData(),
+                                   ExpandChannel(),
+                                   Orientation(),
+                                   ScaleIntensityRange(src_min=config.min_val, src_max=config.max_val, tgt_min=0.0, \
+                                                       tgt_max=1.0, is_clip=True),
+                                   ConvertLabel()])
+
+    train_loader = train_loader.map(operations=transform_image,
+                                    input_columns=["image", "seg"],
+                                    num_parallel_workers=config.num_worker,
+                                    python_multiprocessing=True)
+    if not is_training:
+        train_loader = train_loader.batch(1)
+    return train_loader
+``` 
 
 ### 3.5 构建Unet3D网络结构
 
