@@ -18,4 +18,14 @@
    (1) 下载[LUNA16](https://luna16.grand-challenge.org/)数据集
    (2)
    (3)
+   ```
+./data/
+└── LUNA16
+    ├── train
+       └── images
+       └── seg
+    ├── val
+       └── images
+       └── seg
+```
 # 3.3 
