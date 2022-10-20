@@ -15,17 +15,17 @@
 # 3.1 环境配置
    本案例中的
 # 3.2 数据集准备
-   (1) 下载[LUNA16](https://luna16.grand-challenge.org/)数据集
-   (2)
-   (3)
+   (1) 下载[LUNA16](https://luna16.grand-challenge.org/)数据集到本地，放在data文件夹中
+   (2) 进入路径./data/LUNA16, 将得到的subset0-9.rar和seg-lungs-LUNA16.rar共11个文件解压
+   (3) 设置路径，运行下面代码，划分训练集和验证集，并且将数据格式转化为niffi，得到如下的文件结构：
    ```
-./data/
-└── LUNA16
-    ├── train
-       └── images
-       └── seg
-    ├── val
-       └── images
-       └── seg
-```
+      ./data/
+      └── LUNA16
+          ├── train
+                └── images
+                └── seg
+          ├── val
+                └── images
+                └── seg
+    ```
 # 3.3 
