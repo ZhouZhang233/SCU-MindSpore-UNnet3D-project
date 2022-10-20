@@ -33,7 +33,7 @@
 注：  
     （1）LUNA16数据集共887个volume，我们选择subset9的最后三个volume作为验证集，subset0-8进而subset9剩下的部分作为训练集。  
     （2）可以通过下载ITK-SNAP软件可视化图片和分割标签
-     ![image](image/visual_data.png)  
+     ![image](image/visual_data.jpg)  
      
 ### 3.3 参数设置（训练参数和dataloader参数）
 
