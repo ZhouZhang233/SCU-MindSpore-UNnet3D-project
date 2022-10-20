@@ -98,7 +98,52 @@ def get_config():
 config = get_config()
 ``` 
 ### 3.4 创建不同的数据集增强方式
-完成上述的文件格式转换之后，并进一步划分了训练和测试数据集，但是直接将图片数据送入网络训练，结果往往不太理想，因此需要通过不同的transform操作进行数据集增强，数据增强的方式包括：ExpandChannel、ScaleIntensityRange、RandomCropSamples、OneHot等
+完成上述的文件格式转换之后，并进一步划分了训练和测试数据集，但是直接将图片数据送入网络训练，结果往往不太理想，因此需要通过不同的transform操作进行数据集增强，数据增强的方式包括：ExpandChannel、ScaleIntensityRange、RandomCropSamples、OneHot等，以RandomCropSamples为例
+``` python
+class RandomCropSamples:
+    def __init__(self, roi_size, num_samples=1):
+        self.roi_size = roi_size
+        self.num_samples = num_samples
+        self.set_random_state(0)
+
+    def set_random_state(self, seed=None):
+        """
+        Set the random seed to control the slice size.
+
+        Args:
+            seed: set the random state with an integer seed.
+        """
+        MAX_SEED = np.iinfo(np.uint32).max + 1
+        if seed is not None:
+            _seed = seed % MAX_SEED
+            self.rand_fn = np.random.RandomState(_seed)
+        else:
+            self.rand_fn = np.random.RandomState()
+        return self
+
+    def get_random_patch(self, dims, patch_size, rand_fn=None):
+        """
+        Returns a tuple of slices to define a random patch in an array of shape `dims` with size `patch_size`.
+        """
+        rand_int = np.random.randint if rand_fn is None else rand_fn.randint
+        min_corner = tuple(rand_int(0, ms - ps + 1) if ms > ps else 0 for ms, ps in zip(dims, patch_size))
+        return tuple(slice(mc, mc + ps) for mc, ps in zip(min_corner, patch_size))
+
+    def get_random_slice(self, img_size):
+        slices = (slice(None),) + self.get_random_patch(img_size, self.roi_size, self.rand_fn)
+        return slices
+
+    def __call__(self, image, label):
+        res_image = []
+        res_label = []
+        for _ in range(self.num_samples):
+            slices = self.get_random_slice(image.shape[1:])
+            img = image[slices]
+            label_crop = label[slices]
+            res_image.append(img)
+            res_label.append(label_crop)
+        return np.array(res_image), np.array(res_label)
+``` 
 ### 3.4 创建Dataloader
 
 ### 3.5 构建Unet3D网络结构
