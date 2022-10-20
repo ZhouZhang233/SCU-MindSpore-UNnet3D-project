@@ -282,10 +282,126 @@ class metrics:
         """recall(also sensitivity) metric."""
         return binary.recall(y_pred, y_label)
 ``` 
+
+### 3.7 设置学习率策略
+```python
+# dyanmic learning rate
+import math
+
+def linear_warmup_learning_rate(current_step, warmup_steps, base_lr, init_lr):
+    lr_inc = (float(base_lr) - float(init_lr)) / float(warmup_steps)
+    learning_rate = float(init_lr) + lr_inc * current_step
+    return learning_rate
+
+def a_cosine_learning_rate(current_step, base_lr, warmup_steps, decay_steps):
+    base = float(current_step - warmup_steps) / float(decay_steps)
+    learning_rate = (1 + math.cos(base * math.pi)) / 2 * base_lr
+    return learning_rate
+
+def dynamic_lr(config, base_step):
+    """dynamic learning rate generator"""
+    base_lr = config.lr
+    total_steps = int(base_step * config.epoch_size)
+    warmup_steps = config.warmup_step
+    lr = []
+    for i in range(total_steps):
+        if i < warmup_steps:
+            lr.append(linear_warmup_learning_rate(i, warmup_steps, base_lr, base_lr * config.warmup_ratio))
+        else:
+            lr.append(a_cosine_learning_rate(i, base_lr, warmup_steps, total_steps))
+    return lr
+``` 
 ### 3.7 定义损失函数
 
 ### 3.8 主函数训练
+```python
+import os
+import mindspore
+import mindspore.nn as nn
+from mindspore import ops
+import mindspore.common.dtype as mstype
+from mindspore import Tensor, Model, context
+from mindspore.context import ParallelMode
+from mindspore.communication.management import init, get_rank, get_group_size
+from mindspore.train.loss_scale_manager import FixedLossScaleManager
 
+if config.device_target == 'Ascend':
+    device_id = int(os.getenv('DEVICE_ID'))
+    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False, \
+                        device_id=device_id)
+else:
+    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False)
+
+mindspore.set_seed(1)
+
+@moxing_wrapper()
+def train_net(run_distribute=False):
+    if run_distribute:
+        init()
+        if config.device_target == 'Ascend':
+            rank_id = get_device_id()
+            rank_size = get_device_num()
+        else:
+            rank_id = get_rank()
+            rank_size = get_group_size()
+        parallel_mode = ParallelMode.DATA_PARALLEL
+        context.set_auto_parallel_context(parallel_mode=parallel_mode,
+                                          device_num=rank_size,
+                                          gradients_mean=True)
+    else:
+        rank_id = 0
+        rank_size = 1
+
+    train_dataset = create_dataset(data_path=config.data_path + "/image/",
+                                   seg_path=config.data_path + "/seg/",
+                                   rank_size=rank_size,
+                                   rank_id=rank_id, is_training=True)
+    train_data_size = train_dataset.get_dataset_size()
+    print("train dataset length is:", train_data_size)
+
+    if config.device_target == 'Ascend':
+        network = UNet3d()
+    else:
+        network = UNet3d_()
+
+    # (3)define loss funtion
+    loss_ce_fn = nn.CrossEntropyLoss()
+    loss_dice_fn = nn.DiceLoss(smooth=1e-5)
+    # (4) lr shedule and optimizor
+    lr = Tensor(dynamic_lr(config, train_data_size), mstype.float32)
+    optimizer = nn.Adam(params=network.trainable_params(), learning_rate=lr)
+    # (5) set training mode
+    network.set_train()
+    # (9) Start training
+    print("============== Starting Training ==============")
+    def forward_fn(data, label):
+        logits = network(data)
+        loss_ce = loss_ce_fn(logits, label)
+        loss_dice = loss_dice_fn(logits, label)
+        loss = loss_dice + loss_ce
+        return loss, logits
+    # Get gradient function
+    grad_fn = ops.value_and_grad(forward_fn, None, optimizer.parameters, has_aux=True)
+    # Define function of one-step training
+    def train_step(data, label):
+        (loss, _), grads = grad_fn(data, label)
+        loss = ops.depend(loss, optimizer(grads))
+        return loss
+    for epoch in range(10):
+        for batch, (data, label) in enumerate(train_dataset.create_tuple_iterator()):
+            loss = train_step(data, label)
+            current_lr = optimizer.get_lr()
+            print("Epoch: %d [%d/%d] lr:%.7f Loss: %.4f" % (epoch, batch, train_data_size, current_lr, loss.asnumpy()))
+
+        # Save checkpoint
+        ckpt_save_dir = os.path.join(config.output_path, config.checkpoint_path)
+        mindspore.save_checkpoint(network, os.path.join(ckpt_save_dir, "Epoch_"+str(epoch)+"_model.ckpt"))
+        print("Saved Model to {}/model_{}_epoch.ckpt".format(ckpt_save_dir, epoch))
+    print("============== End Training ==============")
+
+if __name__ == '__main__':
+    train_net()
+```
 ### 3.9 模型预测
 
 ### 3.10 训练结果可视化
