@@ -247,7 +247,41 @@ class UNet3d_(nn.Cell):
         return x
 ``` 
 ### 3.6 自定义Metrics
+```python
+from medpy.metric import binary
 
+class metrics:
+    def __init__(self, smooth=1e-5):
+        self.smooth=1e-5
+
+    def dice_metric(self, y_pred, y_label, empty_score=1.0):
+        """Calculates the dice coefficient for the images"""
+        return binary.dc(y_pred, y_label)
+
+    def jc_metric(self, y_pred, y_label):
+        """Jaccard coefficient"""
+        return binary.jc(y_pred, y_label)
+
+    def hd95_metric(self, y_pred, y_label):
+        """Calculates the hausdorff distance for the images"""
+        return binary.hd95(y_pred, y_label, voxelspacing=None)
+
+    def asd_metric(self, y_pred, y_label):
+        """Average surface distance metric."""
+        return binary.asd(y_pred, y_label, voxelspacing=None)
+
+    def assd_metric(self, y_pred, y_label):
+        """Average symmetric surface distance metric."""
+        return binary.assd(y_pred, y_label, voxelspacing=None)
+
+    def precision_metric(self, y_pred, y_label):
+        """precision metric."""
+        return binary.precision(y_pred, y_label, voxelspacing=None)
+
+    def sensitivity_metric(self, y_pred, y_label, smooth = 1e-5):
+        """recall(also sensitivity) metric."""
+        return binary.recall(y_pred, y_label)
+``` 
 ### 3.7 定义损失函数
 
 ### 3.8 主函数训练
