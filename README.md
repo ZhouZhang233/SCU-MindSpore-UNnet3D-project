@@ -47,8 +47,6 @@ def get_config():
     Get Config according to the yaml file and cli arguments.
     """
     cfg = ml_collections.ConfigDict()
-    # Builtin Configurations(DO NOT CHANGE THESE CONFIGURATIONS unless you know exactly what you are doing)
-    # args = argparse.ArgumentParser(description="default name", add_help=False)
     cfg.enable_fp16_gpu=False
     cfg.enable_modelarts=False
     # Url for modelarts
@@ -99,7 +97,8 @@ def get_config():
 
 config = get_config()
 ``` 
-
+### 3.4 创建不同的数据集增强方式
+完成上述的文件格式转换之后，并进一步划分了训练和测试数据集，但是直接将图片数据送入网络训练，结果往往不太理想，因此需要通过不同的transform操作进行数据集增强，数据增强的方式包括：ExpandChannel、ScaleIntensityRange、RandomCropSamples、OneHot等
 ### 3.4 创建Dataloader
 
 ### 3.5 构建Unet3D网络结构
