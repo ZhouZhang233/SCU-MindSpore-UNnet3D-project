@@ -1,0 +1,8 @@
+numpy
+nibabel
+pyyaml
+SimpleITK
+onnxruntime-gpu
+hausdorff
+medpy
+
