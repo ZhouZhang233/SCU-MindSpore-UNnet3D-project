@@ -17,8 +17,8 @@
 # 3.2 数据集准备
    (1) 下载[LUNA16](https://luna16.grand-challenge.org/)数据集到本地，放在data文件夹中  
    (2) 进入路径./data/LUNA16, 将得到的subset0-9.rar和seg-lungs-LUNA16.rar共11个文件解压  
-   (3) 设置路径，运行下面代码，划分训练集和验证集，并且将数据格式转化为niffi，得到如下的文件结构：
-   ```
+   (3) 设置路径，运行下面代码，划分训练集和验证集，并且将数据格式转化为niffi，得到如下的文件结构：  
+```
       ./data/
       └── LUNA16
           ├── train
@@ -27,8 +27,8 @@
           ├── val
                 └── images
                 └── seg
-   ```
-      注：
+```    
+     注：
         （1）LUNA16数据集共887个volume，我们选择subset9的最后三个volume作为验证集，subset0-8进而subset9剩下的部分作为训练集。
         （2）可以通过下载ITK-SNAP软件可视化图片和分割标签
       ![image](image/visual_data.png)
