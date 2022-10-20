@@ -15,8 +15,8 @@
 ### 3.1 环境配置
    本案例中的
 ### 3.2 数据集准备
-   (1) 下载[LUNA16](https://luna16.grand-challenge.org/)数据集到本地，放在data文件夹中  
-   (2) 进入路径./data/LUNA16, 将得到的subset0-9.rar和seg-lungs-LUNA16.rar共11个文件解压  
+   (1) 下载[LUNA16](https://luna16.grand-challenge.org/)肺结节分割数据集到本地，放在data文件夹中;  
+   (2) 进入路径./data/LUNA16, 将得到的subset0-9.rar和seg-lungs-LUNA16.rar共11个文件解压;  
    (3) 设置路径，运行下面代码，划分训练集和验证集，并且将数据格式转化为niffi，得到如下的文件结构：  
 ```
       ./data/
@@ -31,11 +31,74 @@
 
 
 注：  
-    （1）LUNA16数据集共887个volume，我们选择subset9的最后三个volume作为验证集，subset0-8进而subset9剩下的部分作为训练集。  
+    （1）LUNA16数据集共887个volume，我们选择subset9的最后10个volume作为验证集，subset0-8进而subset9剩下的部分作为训练集。  
     （2）可以通过下载ITK-SNAP软件可视化图片和分割标签
      ![image](image/visual_data.jpg)  
      
 ### 3.3 参数设置（训练参数和dataloader参数）
+在训练过程中的参数设置，如图片大小、训练batchsize大小等
+``` python
+import ml_collections
+import warnings
+warnings.filterwarnings("ignore")
+
+def get_config():
+    """
+    Get Config according to the yaml file and cli arguments.
+    """
+    cfg = ml_collections.ConfigDict()
+    # Builtin Configurations(DO NOT CHANGE THESE CONFIGURATIONS unless you know exactly what you are doing)
+    # args = argparse.ArgumentParser(description="default name", add_help=False)
+    cfg.enable_fp16_gpu=False
+    cfg.enable_modelarts=False
+    # Url for modelarts
+    cfg.data_url=""
+    cfg.train_ur=""
+    cfg.checkpoint_url=""
+    # Path for local
+    cfg.run_distribute=False
+    cfg.enable_profiling=False
+    cfg.data_path="data/LUNA16/train/"
+    cfg.output_path="output"
+    cfg.load_path="/checkpoint_path/"
+    cfg.device_target="GPU"
+    cfg.checkpoint_path="./checkpoint/"
+    cfg.checkpoint_file_path="Unet3d-10-110.ckpt"
+
+    # ==============================================================================
+    # data loader options
+    cfg.num_worker = 4
+    # Training options
+    cfg.lr=0.0005
+    cfg.batch_size=2
+    cfg.epoch_size=10
+    cfg.warmup_step=120
+    cfg.warmup_ratio=0.3
+    cfg.num_classes=4
+    cfg.in_channels=1
+    cfg.keep_checkpoint_max=1
+    cfg.loss_scale=256.0
+    cfg.roi_size=[224, 224, 96]
+    cfg.overlap=0.25
+    cfg.min_val=-500
+    cfg.max_val=1000
+    cfg.upper_limit=5
+    cfg.lower_limit=3
+
+    # Export options
+    cfg.device_id=0
+    cfg.ckpt_file="./checkpoint/Unet3d-10-110.ckpt"
+    cfg.file_name="unet3d"
+    cfg.file_format="MINDIR"
+
+    # 310 infer options
+    cfg.pre_result_path="./preprocess_Result"
+    cfg.post_result_path="./result_Files"
+
+    return cfg
+
+config = get_config()
+``` 
 
 ### 3.4 创建Dataloader
 
