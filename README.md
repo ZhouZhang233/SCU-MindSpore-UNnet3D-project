@@ -13,7 +13,8 @@
 
 ## 3、案例实现
 ### 3.1 环境配置
-   本案例中的
+   本案例中的分别在Ubuntu20 cuda10.1 GTX 1080Ti MindSpore 1.8.1和ModelArt Ascend MindSpore 1.8.1调试成功
+   `pip install -r requirement.txt`
 ### 3.2 数据集准备
    (1) 下载[LUNA16](https://luna16.grand-challenge.org/)肺结节分割数据集到本地，放在data文件夹中;  
    (2) 进入路径./data/LUNA16, 将得到的subset0-9.rar和seg-lungs-LUNA16.rar共11个文件解压;  
@@ -247,6 +248,7 @@ class UNet3d_(nn.Cell):
 ``` 
 ### 3.6 自定义Metrics
 在医学图像分割领域，通过Dice coefficient、Jaccard coefficient（JC）、Hausdorff distance 95（HD95）、Average surface distance（ASD）、Average symmetric surface distance metric（ASSD）、sensitivity（Sens）等量化指标来衡量分割效果的好坏。
+
 （1）Dice系数定义为两倍的交集除以像素和，也叫F1score，其计算公式为：
 
 $$
