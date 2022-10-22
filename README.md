@@ -372,7 +372,8 @@ def dynamic_lr(config, base_step):
 - 调用学习率函数，设置优化器；
 - 设置网络为训练模式；
 - 使用for循环，不断将数据送入网络进行训练；
-- 通过MindSpore自己的可视化工具MindInsignt将loss_dice、loss_ce和loss_total进行可视化，横坐标表示训练的step，纵坐标表示损失大小（运行Mindinsight：）
+- 通过MindSpore自己的可视化工具MindInsignt将loss_dice、loss_ce和loss_total进行可视化，横坐标表示训练的step，纵坐标表示损失大小（运行Mindinsight：mindinsight start --summary-base-dir ./summary_dir --port 1111）  
+
 ![image](image/loss_dice.png)
 ![image](image/loss_ce.png)
 ![image](image/loss_total.png)
@@ -382,6 +383,7 @@ import os
 import mindspore
 import mindspore.nn as nn
 from mindspore import ops
+from mindspore import SummaryRecord
 import mindspore.common.dtype as mstype
 from mindspore import Tensor, Model, context
 from mindspore.context import ParallelMode
@@ -414,20 +416,20 @@ def train_net(run_distribute=False):
     else:
         rank_id = 0
         rank_size = 1
-
+    # (1) create dataloader
     train_dataset = create_dataset(data_path=config.data_path + "/image/",
                                    seg_path=config.data_path + "/seg/",
                                    rank_size=rank_size,
                                    rank_id=rank_id, is_training=True)
     train_data_size = train_dataset.get_dataset_size()
     print("train dataset length is:", train_data_size)
-
+    # (2) construct network
     if config.device_target == 'Ascend':
         network = UNet3d()
     else:
         network = UNet3d_()
 
-    # (3)define loss funtion
+    # (3) define loss funtion
     loss_ce_fn = nn.CrossEntropyLoss()
     loss_dice_fn = nn.DiceLoss(smooth=1e-5)
     # (4) lr shedule and optimizor
@@ -435,37 +437,135 @@ def train_net(run_distribute=False):
     optimizer = nn.Adam(params=network.trainable_params(), learning_rate=lr)
     # (5) set training mode
     network.set_train()
-    # (9) Start training
+    # (6) Start training
     print("============== Starting Training ==============")
     def forward_fn(data, label):
         logits = network(data)
         loss_ce = loss_ce_fn(logits, label)
         loss_dice = loss_dice_fn(logits, label)
         loss = loss_dice + loss_ce
-        return loss, logits
+        return loss, loss_dice, loss_ce, logits
     # Get gradient function
     grad_fn = ops.value_and_grad(forward_fn, None, optimizer.parameters, has_aux=True)
     # Define function of one-step training
     def train_step(data, label):
-        (loss, _), grads = grad_fn(data, label)
+        (loss, loss_dice, loss_ce, _), grads = grad_fn(data, label)
         loss = ops.depend(loss, optimizer(grads))
-        return loss
-    for epoch in range(10):
-        for batch, (data, label) in enumerate(train_dataset.create_tuple_iterator()):
-            loss = train_step(data, label)
-            current_lr = optimizer.get_lr()
-            print("Epoch: %d [%d/%d] lr:%.7f Loss: %.4f" % (epoch, batch, train_data_size, current_lr, loss.asnumpy()))
+        return loss, loss_dice, loss_ce
 
-        # Save checkpoint
-        ckpt_save_dir = os.path.join(config.output_path, config.checkpoint_path)
-        mindspore.save_checkpoint(network, os.path.join(ckpt_save_dir, "Epoch_"+str(epoch)+"_model.ckpt"))
-        print("Saved Model to {}/model_{}_epoch.ckpt".format(ckpt_save_dir, epoch))
+    with SummaryRecord('./summary_dir/summary_01') as summary_record:
+        for epoch in range(config.max_epoch):
+            for step, (data, label) in enumerate(train_dataset.create_tuple_iterator()):
+                loss, loss_dice, loss_ce = train_step(data, label)
+
+                current_step = epoch * train_data_size + step
+                current_lr = optimizer.get_lr()
+                summary_record.record(current_step)
+                summary_record.add_value('scalar', 'lr', current_lr)
+                summary_record.add_value('scalar', 'loss_total', loss)
+                summary_record.add_value('scalar', 'loss_dice', loss_dice)
+                summary_record.add_value('scalar', 'loss_ce', loss_ce)
+
+                loss, loss_dice, loss_ce = loss.asnumpy(), loss_dice.asnumpy(), loss_ce.asnumpy()
+                print("Epoch: %d [%d/%d] [%d/%d] lr:%.7f Loss: %.4f Loss_dice: %.4f Loss_ce: %.4f" %
+                      (epoch, step, train_data_size, current_step, train_data_size*config.max_epoch,
+                       current_lr, loss, loss_dice, loss_ce))
+                # Save checkpoint
+                ckpt_save_dir = os.path.join(config.output_path, config.checkpoint_path)
+                mindspore.save_checkpoint(network, os.path.join(ckpt_save_dir, "Epoch_"+str(epoch)+"_model.ckpt"))
+            print("Saved Model to {}/Epoch_{}_model.ckpt".format(ckpt_save_dir, epoch))
+
     print("============== End Training ==============")
 
 if __name__ == '__main__':
     train_net()
 ```
 ### 3.9 模型预测
+```python
+import os
+import numpy as np
+from mindspore import dtype as mstype
+from mindspore import Model, context, Tensor
+from mindspore.train.serialization import load_checkpoint, load_param_into_net
+
+config.device_target = "GPU"
+if config.device_target == 'Ascend':
+    device_id = int(os.getenv('DEVICE_ID'))
+    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False, \
+                        device_id=device_id)
+else:
+    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False)
+
+# @moxing_wrapper()
+def test_net(data_path, ckpt_path):
+    data_dir = data_path + "/image/"
+    seg_dir = data_path + "/seg/"
+    eval_dataset = create_dataset(data_path=data_dir, seg_path=seg_dir, is_training=False)
+    eval_data_size = eval_dataset.get_dataset_size()
+    print("test dataset length is:", eval_data_size)
+
+    metrics_score = {}
+    metrics_score["dice"] = 0
+    metrics_score["hd95"] = 0
+    metrics_score["jc"] = 0
+
+    if config.device_target == 'Ascend':
+        network = UNet3d()
+    else:
+        network = UNet3d_()
+    network.set_train(False)
+    param_dict = load_checkpoint(ckpt_path)
+    load_param_into_net(network, param_dict)
+    # metrics
+    results = {}
+    results["dice"] = 0
+    results["hd95"] = 0
+    results["jc"] = 0
+    results["asd"] = 0
+    results["sens"] = 0
+    model = Model(network)
+    index = 0
+    total_dice = 0
+    config.batch_size=1
+    for batch in eval_dataset.create_dict_iterator(num_epochs=1, output_numpy=True):
+        image = batch["image"]
+        seg = batch["seg"]
+        print("current image shape is {}".format(image.shape), flush=True)
+        sliding_window_list, slice_list = create_sliding_window(image, config.roi_size, config.overlap)
+        image_size = (config.batch_size, config.num_classes) + image.shape[2:]
+        output_image = np.zeros(image_size, np.float32)
+        count_map = np.zeros(image_size, np.float32)
+        importance_map = np.ones(config.roi_size, np.float32)
+        for window, slice_ in zip(sliding_window_list, slice_list):
+            window_image = Tensor(window, mstype.float32)
+            pred_probs = model.predict(window_image)
+            output_image[slice_] += pred_probs.asnumpy()
+            count_map[slice_] += importance_map
+        output_image = output_image / count_map
+        dice, hd95, jc, asd, sens = CalculateDice(output_image, seg)
+
+        print("The %d batch Dice: %.4f, HD95:%.4f, JC: %.4f, ASD: %.4f, Sens: %.4f"%(index, dice, hd95, jc, asd, sens))
+        total_dice += dice
+        results["dice"] += dice
+        results["hd95"] += hd95
+        results["jc"] += jc
+        results["asd"] += asd
+        results["sens"] += sens
+        index = index + 1
+    avg_dice = results["dice"] / eval_data_size
+    avg_hd95 = results["hd95"] / eval_data_size
+    avg_jc = results["jc"] / eval_data_size
+    avg_asd = results["asd"] / eval_data_size
+    avg_sens = results["sens"] / eval_data_size
+    print("**********************End Eval***************************************")
+    print("The average Dice: %.4f, HD95:%.4f, JC: %.4f, ASD: %.4f, Sens: %.4f" %
+          (avg_dice, avg_hd95, avg_jc, avg_asd, avg_sens))
+
+if __name__ == '__main__':
+    test_net(data_path="data/LUNA16/val/",
+             ckpt_path="./output/checkpoint/Epoch_9_model.ckpt")
+```
+
 
 ### 3.10 训练结果可视化
 
