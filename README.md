@@ -246,7 +246,15 @@ class UNet3d_(nn.Cell):
         return x
 ``` 
 ### 3.6 自定义Metrics
-在医学图像分割领域，通过Dice coefficient、Jaccard coefficient、Hausdorff distance 95、Average surface distance、Average symmetric surface distance metric、sensitivity等量化指标来衡量分割效果的好坏。
+在医学图像分割领域，通过Dice coefficient、Jaccard coefficient（JC）、Hausdorff distance 95（HD95）、Average surface distance（ASD）、Average symmetric surface distance metric（ASSD）、sensitivity（Sens）等量化指标来衡量分割效果的好坏。
+Dice系数定义为两倍的交集除以像素和，也叫F1score，与IoU呈正相关关系，其计算公式为：
+
+$$
+\text {Dice}=\frac{2|A\cap B|}{|A|+|B|}
+$$
+$$
+\text {JC}=\frac{2|A\cap B|}{A\cupB}
+$$
 ```python
 from medpy.metric import binary
 
