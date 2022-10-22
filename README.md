@@ -247,13 +247,17 @@ class UNet3d_(nn.Cell):
 ``` 
 ### 3.6 自定义Metrics
 在医学图像分割领域，通过Dice coefficient、Jaccard coefficient（JC）、Hausdorff distance 95（HD95）、Average surface distance（ASD）、Average symmetric surface distance metric（ASSD）、sensitivity（Sens）等量化指标来衡量分割效果的好坏。
-Dice系数定义为两倍的交集除以像素和，也叫F1score，与IoU呈正相关关系，其计算公式为：
-
+（1）Dice系数定义为两倍的交集除以像素和，也叫F1score，其计算公式为：
 $$
-\text {Dice}=\frac{2|A\cap B|}{|A|+|B|}
+\text {Dice}=\frac{2|A \cap B|}{|A|+|B|}
 $$
+（2）杰卡德系数（Jaccard coefficient，JC）又叫做交并比（Interaction of Union，IoU），定义为点集A和和点集B的交集和并集的比值。计算公式为：
 $$
-\text {JC}=\frac{2|A\cap B|}{A\cupB}
+\text {JC}=\frac{2|A \cap B|}{A \cup B}
+$$
+豪斯多夫距离（Hausdorff distance 95）是描述两组点集之间相似程度的一种量度，Dice对mask的内部填充比较敏感，而Hausdorff distance 对分割出的边界比较敏感，点集A和点集B的HD定义为：
+$$
+\text {H(A, B)}=\max{h(A,B),h(B,A)}
 $$
 ```python
 from medpy.metric import binary
