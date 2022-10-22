@@ -283,6 +283,8 @@ class metrics:
 ``` 
 
 ### 3.7 设置学习率策略
+学习率的设置对网络的训练至关重要，在这里我们使用两阶段的学习率，前三个epoch进行warm up，使用线性上升学习率策略，后面七个epoch使用consine下降学习率策略，使用mindinsight进行可视化，如下图所示：
+![image](image/LR.png)
 ```python
 # dyanmic learning rate
 import math
