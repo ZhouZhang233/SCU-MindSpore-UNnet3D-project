@@ -144,7 +144,7 @@ class RandomCropSamples:
             res_label.append(label_crop)
         return np.array(res_image), np.array(res_label)
 ``` 
-### 3.4 创建Dataloader
+### 3.5 创建Dataloader
 设置好数据预处理之后，接下来需要定义一个可迭代的Dataloader用于数据加载，然后送入网络
 ```python
 import glob
@@ -197,7 +197,7 @@ def create_dataset(data_path, seg_path, rank_size=1, rank_id=0, is_training=True
     return train_loader
 ``` 
 
-### 3.5 构建Unet3D网络结构
+### 3.6 构建Unet3D网络结构
 构建Unet3D网络，包括Encoder和Decoder两部分，Encoder有4个下采样层；Decoder有4个上采样层，最后的输出和原图大小相同的分割结果。
 ```python
 import mindspore as ms
@@ -246,7 +246,7 @@ class UNet3d_(nn.Cell):
         x = self.up4(x, x1)
         return x
 ``` 
-### 3.6 自定义Metrics
+### 3.7 自定义Metrics
 在医学图像分割领域，通过Dice coefficient、Jaccard coefficient（JC）、Hausdorff distance 95（HD95）、Average surface distance（ASD）、Average symmetric surface distance metric（ASSD）、sensitivity（Sens）等量化指标来衡量分割效果的好坏。
 
 （1）Dice系数定义为两倍的交集除以像素和，也叫F1score，其计算公式为：
@@ -334,7 +334,7 @@ class metrics:
         return binary.recall(y_pred, y_label)
 ``` 
 
-### 3.7 设置学习率策略
+### 3.8 设置学习率策略
 学习率的设置对网络的训练至关重要，在这里我们使用两阶段的学习率，前三个epoch进行warm up，使用线性上升学习率策略，后面七个epoch使用consine下降学习率策略，使用mindinsight进行可视化，如下图所示：
 ![image](image/LR.png)
 ```python
@@ -365,7 +365,7 @@ def dynamic_lr(config, base_step):
     return lr
 ``` 
 
-### 3.7 主函数训练
+### 3.9 主函数训练
 主函数训练过程主要包括以下几步：
 - 选择运行设备GPU或者Ascend；
 - 调用create_dataset函数，创建dataloader；
@@ -484,7 +484,7 @@ def train_net(run_distribute=False):
 if __name__ == '__main__':
     train_net()
 ```
-### 3.9 模型预测
+### 3.10 模型预测
 设置好测试数据集路径和加载模型路径，就可以开始测试啦！
 ```python
 import os
