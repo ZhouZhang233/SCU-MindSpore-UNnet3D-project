@@ -294,6 +294,8 @@ $$
 - FP：假阳性数，在label中为阴性，在预测值中为阳性的个数。
 - FN：假阴性数，在label中为阳性，在预测值中为阴性的个数。
 
+为了实现上述指标，我们直接在这里调用medpy包，集成了很多指标，首先定义一个metrics类，然后分别调用不同指标的函数
+
 ```python
 from medpy.metric import binary
 
@@ -360,9 +362,21 @@ def dynamic_lr(config, base_step):
             lr.append(a_cosine_learning_rate(i, base_lr, warmup_steps, total_steps))
     return lr
 ``` 
-### 3.7 定义损失函数
 
-### 3.8 主函数训练
+### 3.7 主函数训练
+主函数训练过程主要包括以下几步：
+-选择运行设备GPU或者Ascend；
+-调用create_dataset函数，创建dataloader；
+-调用Unet3D函数，构建网络；
+-定义损失函数，这里我们使用常见的dice loss和交叉熵损失（cross entropy loss）；
+-调用学习率函数，设置优化器；
+-设置网络为训练模式；
+-使用for循环，不断将数据送入网络进行训练；
+-通过MindSpore自己的可视化工具MindInsignt将loss_dice、loss_ce和loss_total进行可视化，横坐标表示训练的step，纵坐标表示损失大小（运行Mindinsight：）
+![image](image/loss_dice.png)
+![image](image/loss_ce.png)
+![image](image/loss_total.png)
+
 ```python
 import os
 import mindspore
@@ -454,6 +468,4 @@ if __name__ == '__main__':
 ### 3.9 模型预测
 
 ### 3.10 训练结果可视化
-![image](image/loss_dice.png)
-![image](image/loss_ce.png)
-![image](image/loss_total.png)
+
