@@ -406,3 +406,6 @@ if __name__ == '__main__':
 ### 3.9 模型预测
 
 ### 3.10 训练结果可视化
+![image](image/loss_dice.png)
+![image](image/loss_ce.png)
+![image](image/loss_total.png)
