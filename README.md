@@ -266,8 +266,22 @@ $$
 $$
 
 $$
-\text {h(A, B)}=\max_{a\in A}(\min_{b\in B}\left| a-b \right|)
+\text {h(A, B)}=\max_{a\in A}(\min_{b\in B}\left\| a-b \right\|)
 $$
+
+‖·‖是点集A和点集B间的距离范式
+（4）平均表面距离（Average surface distance，ASD）指的是P中所有点的表面距离的平均，计算公式为：
+
+$$
+\text {ASD(A,B)}=\sum_{a \in A} \min_{b \in B} \left\|a-b\right\|
+$$
+
+（4）平均对称表面距离（Average symmetric surface distance，ASSD）指的是P中所有点的表面距离的平均，计算公式为：
+
+$$
+\text {ASSD}=\frac{1}{A+B}(\sum_{a \in A} \min_{b \in B} \left\|a-b\right\|+\sum_{b \in B} \min_{a \in A} \left\|b-a\right\|)
+$$
+
 ```python
 from medpy.metric import binary
 
