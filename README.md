@@ -270,17 +270,29 @@ $$
 $$
 
 ‖·‖是点集A和点集B间的距离范式
+
 （4）平均表面距离（Average surface distance，ASD）指的是P中所有点的表面距离的平均，计算公式为：
 
 $$
 \text {ASD(A,B)}=\sum_{a \in A} \min_{b \in B} \left\|a-b\right\|
 $$
 
-（4）平均对称表面距离（Average symmetric surface distance，ASSD）指的是P中所有点的表面距离的平均，计算公式为：
+（5）平均对称表面距离（Average symmetric surface distance，ASSD）指的是P中所有点的表面距离的平均，计算公式为：
 
 $$
 \text {ASSD}=\frac{1}{A+B}(\sum_{a \in A} \min_{b \in B} \left\|a-b\right\|+\sum_{b \in B} \min_{a \in A} \left\|b-a\right\|)
 $$
+
+（6）敏感度（sensitivity）是描述识别出的阳性占所有阳性的比例
+
+$$
+\text {Sens}=\frac{TP}{TP+FN}
+$$
+
+- TP：真阳性数，在label中为阳性，在预测值中也为阳性的个数。
+- TN：真阴性数，在label中为阴性，在预测值中也为阴性的个数。
+- FP：假阳性数，在label中为阴性，在预测值中为阳性的个数。
+- FN：假阴性数，在label中为阳性，在预测值中为阴性的个数。
 
 ```python
 from medpy.metric import binary
