@@ -262,8 +262,11 @@ $$
 (3)豪斯多夫距离（Hausdorff distance 95）是描述两组点集之间相似程度的一种量度，Dice对mask的内部填充比较敏感，而Hausdorff distance 对分割出的边界比较敏感，点集A和点集B的HD定义为：
 
 $$
-\text {H(A, B)}=\max{h(A,B),h(B,A)}
+\text {H(A, B)}=\max(h(A,B),h(B,A))
+\text {h(A, B)}=\max_{a\in A}(\min_{b\in B}\left| a-b \right|)
 $$
+
+
 
 ```python
 from medpy.metric import binary
