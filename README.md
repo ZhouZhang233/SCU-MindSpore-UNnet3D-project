@@ -13,7 +13,7 @@
 
 ## 3、案例实现
 ### 3.1 环境配置
-   本案例中的分别在Ubuntu20 cuda10.1 GTX 1080Ti MindSpore 1.8.1和ModelArt Ascend MindSpore 1.8.1调试成功
+   本案例中的分别在Ubuntu20 cuda10.1 GTX 1080Ti MindSpore 1.8.1和ModelArt Ascend MindSpore 1.8.1调试成功  
    `pip install -r requirement.txt`
 ### 3.2 数据集准备
    (1) 下载[LUNA16](https://luna16.grand-challenge.org/)肺结节分割数据集到本地，放在data文件夹中;  
@@ -375,7 +375,8 @@ def dynamic_lr(config, base_step):
 - 设置网络为训练模式；
 - 使用for循环，不断将数据送入网络进行训练；
 - 通过MindSpore自己的可视化工具MindInsignt将loss_dice、loss_ce和loss_total进行可视化，横坐标表示训练的step，纵坐标表示损失大小  
-  运行Mindinsight：`mindinsight start --summary-base-dir ./summary_dir --port 1111`  
+  运行Mindinsight：  
+  `mindinsight start --summary-base-dir ./summary_dir --port 1111`  
 
 ![image](image/loss_dice.png)
 ![image](image/loss_ce.png)
@@ -484,6 +485,7 @@ if __name__ == '__main__':
     train_net()
 ```
 ### 3.9 模型预测
+设置好测试数据集路径和加载模型路径，就可以开始测试啦！
 ```python
 import os
 import numpy as np
@@ -569,6 +571,4 @@ if __name__ == '__main__':
              ckpt_path="./output/checkpoint/Epoch_9_model.ckpt")
 ```
 
-
-### 3.10 训练结果可视化
 
