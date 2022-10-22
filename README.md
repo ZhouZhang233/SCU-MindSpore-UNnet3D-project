@@ -197,7 +197,7 @@ def create_dataset(data_path, seg_path, rank_size=1, rank_id=0, is_training=True
 ``` 
 
 ### 3.5 构建Unet3D网络结构
-构建Unet3D网络
+构建Unet3D网络，包括Encoder和Decoder两部分，Encoder有4个下采样层；Decoder有4个上采样层，最后的输出和原图大小相同的分割结果。
 ```python
 import mindspore as ms
 import mindspore.nn as nn
@@ -246,6 +246,7 @@ class UNet3d_(nn.Cell):
         return x
 ``` 
 ### 3.6 自定义Metrics
+在医学图像分割领域，通过Dice coefficient、Jaccard coefficient、Hausdorff distance 95、Average surface distance、Average symmetric surface distance metric、sensitivity等量化指标来衡量分割效果的好坏。
 ```python
 from medpy.metric import binary
 
