@@ -374,7 +374,8 @@ def dynamic_lr(config, base_step):
 - 调用学习率函数，设置优化器；
 - 设置网络为训练模式；
 - 使用for循环，不断将数据送入网络进行训练；
-- 通过MindSpore自己的可视化工具MindInsignt将loss_dice、loss_ce和loss_total进行可视化，横坐标表示训练的step，纵坐标表示损失大小（运行Mindinsight：mindinsight start --summary-base-dir ./summary_dir --port 1111）  
+- 通过MindSpore自己的可视化工具MindInsignt将loss_dice、loss_ce和loss_total进行可视化，横坐标表示训练的step，纵坐标表示损失大小  
+  运行Mindinsight：`mindinsight start --summary-base-dir ./summary_dir --port 1111`  
 
 ![image](image/loss_dice.png)
 ![image](image/loss_ce.png)
