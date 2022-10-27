@@ -1,574 +1,452 @@
-# SCU-MindSpore-UNnet3D-project
-
-## 1、介绍
-
-华为-MindSpore UNet3D实现案例
-
-## 2、方法
-
-本仓库在华为-Mindspore深度学习框架下实现Unet3D案例  
-文章：[3D U-Net: Learning Dense Volumetric Segmentation from Sparse Annotation](https://lmb.informatik.uni-freiburg.de/Publications/2016/CABR16/cicek16miccai.pdf)
-![image](image/framework.jpg)
-网络结构如图所示，输入图片的大小为W×H×D，上图中的通道数为3，即输入图像有三个不同的模态，相对于平常的2D图片，除了width、heigh，3D图片多了depth这个维度，然后通过卷积层升高图片的通道数，再通过max pooling层降低特征的分辨率大小，然后经过encoder之后，再利用反卷积层增大特征的分辨率，直到得到输入图片大小的特征，为了保留细节信息，将浅层特征和深层特征经过skip connection拼接起来，使得提取的特征更丰富，decoder的输出为预测的分割图像，再将其和标签做损失函数，这里我们采用交叉熵损失和dice损失。
-
-## 3、案例实现
-### 3.1 环境配置
-   本案例中的分别在Ubuntu20 cuda10.1 GTX 1080Ti MindSpore 1.8.1和ModelArt Ascend MindSpore 1.8.1调试成功  
-   `pip install -r requirement.txt`
-### 3.2 数据集准备
-   (1) 下载[LUNA16](https://luna16.grand-challenge.org/)肺结节分割数据集到本地，放在data文件夹中;  
-   (2) 进入路径./data/LUNA16, 将得到的subset0-9.rar和seg-lungs-LUNA16.rar共11个文件解压;  
-   (3) 设置路径，运行下面代码，划分训练集和验证集，并且将数据格式转化为niffi，得到如下的文件结构：  
-```
-      ./data/
-      └── LUNA16
-          ├── train
-                └── images
-                └── seg
-          ├── val
-                └── images
-                └── seg
-``` 
-
-注：  
-    （1）LUNA16数据集共887个volume，我们选择subset9的最后10个volume作为验证集，subset0-8进而subset9剩下的部分作为训练集。  
-    （2）可以通过下载ITK-SNAP软件可视化图片和分割标签
-     ![image](image/visual_data.jpg)  
-     
-### 3.3 参数设置（训练参数和dataloader参数）
-在训练过程中的参数设置，如图片大小、训练batchsize大小等
-``` python
-import ml_collections
-import warnings
-warnings.filterwarnings("ignore")
-
-def get_config():
-    """
-    Get Config according to the yaml file and cli arguments.
-    """
-    cfg = ml_collections.ConfigDict()
-    cfg.enable_fp16_gpu=False
-    cfg.enable_modelarts=False
-    # Url for modelarts
-    cfg.data_url=""
-    cfg.train_ur=""
-    cfg.checkpoint_url=""
-    # Path for local
-    cfg.run_distribute=False
-    cfg.enable_profiling=False
-    cfg.data_path="data/LUNA16/train/"
-    cfg.output_path="output"
-    cfg.load_path="/checkpoint_path/"
-    cfg.device_target="GPU"
-    cfg.checkpoint_path="./checkpoint/"
-    cfg.checkpoint_file_path="Unet3d-10-110.ckpt"
-
-    # ==============================================================================
-    # data loader options
-    cfg.num_worker = 4
-    # Training options
-    cfg.lr=0.0005
-    cfg.batch_size=2
-    cfg.epoch_size=10
-    cfg.warmup_step=120
-    cfg.warmup_ratio=0.3
-    cfg.num_classes=4
-    cfg.in_channels=1
-    cfg.keep_checkpoint_max=1
-    cfg.loss_scale=256.0
-    cfg.roi_size=[224, 224, 96]
-    cfg.overlap=0.25
-    cfg.min_val=-500
-    cfg.max_val=1000
-    cfg.upper_limit=5
-    cfg.lower_limit=3
-
-    # Export options
-    cfg.device_id=0
-    cfg.ckpt_file="./checkpoint/Unet3d-10-110.ckpt"
-    cfg.file_name="unet3d"
-    cfg.file_format="MINDIR"
-
-    # 310 infer options
-    cfg.pre_result_path="./preprocess_Result"
-    cfg.post_result_path="./result_Files"
-
-    return cfg
-
-config = get_config()
-``` 
-### 3.4 创建不同的数据集增强方式
-完成上述的文件格式转换之后，并进一步划分了训练和测试数据集，但是直接将图片数据送入网络训练，结果往往不太理想，因此需要通过不同的transform操作进行数据集增强，数据增强的方式包括：ExpandChannel、ScaleIntensityRange、RandomCropSamples、OneHot等，以RandomCropSamples为例
-``` python
-class RandomCropSamples:
-    def __init__(self, roi_size, num_samples=1):
-        self.roi_size = roi_size
-        self.num_samples = num_samples
-        self.set_random_state(0)
-
-    def set_random_state(self, seed=None):
-        """
-        Set the random seed to control the slice size.
-
-        Args:
-            seed: set the random state with an integer seed.
-        """
-        MAX_SEED = np.iinfo(np.uint32).max + 1
-        if seed is not None:
-            _seed = seed % MAX_SEED
-            self.rand_fn = np.random.RandomState(_seed)
-        else:
-            self.rand_fn = np.random.RandomState()
-        return self
-
-    def get_random_patch(self, dims, patch_size, rand_fn=None):
-        """
-        Returns a tuple of slices to define a random patch in an array of shape `dims` with size `patch_size`.
-        """
-        rand_int = np.random.randint if rand_fn is None else rand_fn.randint
-        min_corner = tuple(rand_int(0, ms - ps + 1) if ms > ps else 0 for ms, ps in zip(dims, patch_size))
-        return tuple(slice(mc, mc + ps) for mc, ps in zip(min_corner, patch_size))
-
-    def get_random_slice(self, img_size):
-        slices = (slice(None),) + self.get_random_patch(img_size, self.roi_size, self.rand_fn)
-        return slices
-
-    def __call__(self, image, label):
-        res_image = []
-        res_label = []
-        for _ in range(self.num_samples):
-            slices = self.get_random_slice(image.shape[1:])
-            img = image[slices]
-            label_crop = label[slices]
-            res_image.append(img)
-            res_label.append(label_crop)
-        return np.array(res_image), np.array(res_label)
-``` 
-### 3.5 创建Dataloader
-设置好数据预处理之后，接下来需要定义一个可迭代的Dataloader用于数据加载，然后送入网络
-```python
-import glob
-import mindspore.dataset as ds
-from mindspore.dataset.transforms.transforms import Compose
-import nibabel as nib
-import os
-
-class Dataset:
-    def __init__(self, data, seg):
-        self.data = data
-        self.seg = seg
-    def __len__(self):
-        return len(self.data)
-    def __getitem__(self, index):
-        data = self.data[index]
-        seg = self.seg[index]
-        return [data], [seg]
-
-def create_dataset(data_path, seg_path, rank_size=1, rank_id=0, is_training=True):
-    seg_files = sorted(glob.glob(os.path.join(seg_path, "*.nii.gz")))
-    train_files = [os.path.join(data_path, os.path.basename(seg)) for seg in seg_files]
-    train_ds = Dataset(data=train_files, seg=seg_files)
-    train_loader = ds.GeneratorDataset(train_ds, column_names=["image", "seg"], num_parallel_workers=config.num_worker, \
-                                       shuffle=is_training, num_shards=rank_size, shard_id=rank_id)
-
-    if is_training:
-        transform_image = Compose([LoadData(),
-                                   ExpandChannel(),
-                                   Orientation(),
-                                   ScaleIntensityRange(src_min=config.min_val, src_max=config.max_val, tgt_min=0.0, \
-                                                       tgt_max=1.0, is_clip=True),
-                                   RandomCropSamples(roi_size=config.roi_size, num_samples=4),
-                                   ConvertLabel(),
-                                   OneHot(num_classes=config.num_classes)])
-    else:
-        transform_image = Compose([LoadData(),
-                                   ExpandChannel(),
-                                   Orientation(),
-                                   ScaleIntensityRange(src_min=config.min_val, src_max=config.max_val, tgt_min=0.0, \
-                                                       tgt_max=1.0, is_clip=True),
-                                   ConvertLabel()])
-
-    train_loader = train_loader.map(operations=transform_image,
-                                    input_columns=["image", "seg"],
-                                    num_parallel_workers=config.num_worker,
-                                    python_multiprocessing=True)
-    if not is_training:
-        train_loader = train_loader.batch(1)
-    return train_loader
-``` 
-
-### 3.6 构建Unet3D网络结构
-构建Unet3D网络，包括Encoder和Decoder两部分，Encoder有4个下采样层；Decoder有4个上采样层，最后的输出和原图大小相同的分割结果。
-```python
-import mindspore as ms
-import mindspore.nn as nn
-from mindspore import dtype as mstype
-from mindspore.ops import operations as P
-from src.unet3d_parts import Down, Up
-import numpy as np
-
-class UNet3d_(nn.Cell):
-    """
-    UNet3d_ support fp32 and fp16(amp) training on GPU.
-    """
-    def __init__(self):
-        super(UNet3d_, self).__init__()
-        self.n_channels = config.in_channels
-        self.n_classes = config.num_classes
-
-        # down
-        self.down1 = Down(in_channel=self.n_channels, out_channel=16, dtype=mstype.float32)
-        self.down2 = Down(in_channel=16, out_channel=32, dtype=mstype.float32)
-        self.down3 = Down(in_channel=32, out_channel=64, dtype=mstype.float32)
-        self.down4 = Down(in_channel=64, out_channel=128, dtype=mstype.float32)
-        self.down5 = Down(in_channel=128, out_channel=256, stride=1, kernel_size=(1, 1, 1), \
-                          dtype=mstype.float32)
-        # up
-        self.up1 = Up(in_channel=256, down_in_channel=128, out_channel=64, \
-                      dtype=mstype.float32)
-        self.up2 = Up(in_channel=64, down_in_channel=64, out_channel=32, \
-                      dtype=mstype.float32)
-        self.up3 = Up(in_channel=32, down_in_channel=32, out_channel=16, \
-                      dtype=mstype.float32)
-        self.up4 = Up(in_channel=16, down_in_channel=16, out_channel=self.n_classes, \
-                      dtype=mstype.float32, is_output=True)
-
-    def construct(self, input_data):
-        x1 = self.down1(input_data)
-        x2 = self.down2(x1)
-        x3 = self.down3(x2)
-        x4 = self.down4(x3)
-        x5 = self.down5(x4)
-
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        return x
-``` 
-### 3.7 自定义Metrics
-在医学图像分割领域，通过Dice coefficient、Jaccard coefficient（JC）、Hausdorff distance 95（HD95）、Average surface distance（ASD）、Average symmetric surface distance metric（ASSD）、sensitivity（Sens）等量化指标来衡量分割效果的好坏。
-
-（1）Dice系数定义为两倍的交集除以像素和，也叫F1score，其计算公式为：
-
-$$
-\text {Dice}=\frac{2|A \cap B|}{|A|+|B|}
-$$
-
-（2）杰卡德系数（Jaccard coefficient，JC）又叫做交并比（Interaction of Union，IoU），定义为点集A和和点集B的交集和并集的比值。计算公式为：
-
-$$
-\text {JC}=\frac{2|A \cap B|}{A \cup B}
-$$
-
-(3)豪斯多夫距离（Hausdorff distance 95）是描述两组点集之间相似程度的一种量度，Dice对mask的内部填充比较敏感，而Hausdorff distance 对分割出的边界比较敏感，点集A和点集B的HD定义为：
-
-$$
-\text {H(A, B)}=\max(h(A,B),h(B,A))
-$$
-
-$$
-\text {h(A, B)}=\max_{a\in A}(\min_{b\in B}\left\| a-b \right\|)
-$$
-
-‖·‖是点集A和点集B间的距离范式
-
-（4）平均表面距离（Average surface distance，ASD）指的是P中所有点的表面距离的平均，计算公式为：
-
-$$
-\text {ASD(A,B)}=\sum_{a \in A} \min_{b \in B} \left\|a-b\right\|
-$$
-
-（5）平均对称表面距离（Average symmetric surface distance，ASSD）指的是P中所有点的表面距离的平均，计算公式为：
-
-$$
-\text {ASSD}=\frac{1}{A+B}(\sum_{a \in A} \min_{b \in B} \left\|a-b\right\|+\sum_{b \in B} \min_{a \in A} \left\|b-a\right\|)
-$$
-
-（6）敏感度（sensitivity）是描述识别出的阳性占所有阳性的比例
-
-$$
-\text {Sens}=\frac{TP}{TP+FN}
-$$
-
-- TP：真阳性数，在label中为阳性，在预测值中也为阳性的个数。
-- TN：真阴性数，在label中为阴性，在预测值中也为阴性的个数。
-- FP：假阳性数，在label中为阴性，在预测值中为阳性的个数。
-- FN：假阴性数，在label中为阳性，在预测值中为阴性的个数。
-
-为了实现上述指标，我们直接在这里调用medpy包，集成了很多指标，首先定义一个metrics类，然后分别调用不同指标的函数
-
-```python
-from medpy.metric import binary
-
-class metrics:
-    def __init__(self, smooth=1e-5):
-        self.smooth=1e-5
-
-    def dice_metric(self, y_pred, y_label, empty_score=1.0):
-        """Calculates the dice coefficient for the images"""
-        return binary.dc(y_pred, y_label)
-
-    def jc_metric(self, y_pred, y_label):
-        """Jaccard coefficient"""
-        return binary.jc(y_pred, y_label)
-
-    def hd95_metric(self, y_pred, y_label):
-        """Calculates the hausdorff distance for the images"""
-        return binary.hd95(y_pred, y_label, voxelspacing=None)
-
-    def asd_metric(self, y_pred, y_label):
-        """Average surface distance metric."""
-        return binary.asd(y_pred, y_label, voxelspacing=None)
-
-    def assd_metric(self, y_pred, y_label):
-        """Average symmetric surface distance metric."""
-        return binary.assd(y_pred, y_label, voxelspacing=None)
-
-    def precision_metric(self, y_pred, y_label):
-        """precision metric."""
-        return binary.precision(y_pred, y_label, voxelspacing=None)
-
-    def sensitivity_metric(self, y_pred, y_label, smooth = 1e-5):
-        """recall(also sensitivity) metric."""
-        return binary.recall(y_pred, y_label)
-``` 
-
-### 3.8 设置学习率策略
-学习率的设置对网络的训练至关重要，在这里我们使用两阶段的学习率，前三个epoch进行warm up，使用线性上升学习率策略，后面七个epoch使用consine下降学习率策略，使用mindinsight进行可视化，如下图所示：
-![image](image/LR.png)
-```python
-# dyanmic learning rate
-import math
-
-def linear_warmup_learning_rate(current_step, warmup_steps, base_lr, init_lr):
-    lr_inc = (float(base_lr) - float(init_lr)) / float(warmup_steps)
-    learning_rate = float(init_lr) + lr_inc * current_step
-    return learning_rate
-
-def a_cosine_learning_rate(current_step, base_lr, warmup_steps, decay_steps):
-    base = float(current_step - warmup_steps) / float(decay_steps)
-    learning_rate = (1 + math.cos(base * math.pi)) / 2 * base_lr
-    return learning_rate
-
-def dynamic_lr(config, base_step):
-    """dynamic learning rate generator"""
-    base_lr = config.lr
-    total_steps = int(base_step * config.epoch_size)
-    warmup_steps = config.warmup_step
-    lr = []
-    for i in range(total_steps):
-        if i < warmup_steps:
-            lr.append(linear_warmup_learning_rate(i, warmup_steps, base_lr, base_lr * config.warmup_ratio))
-        else:
-            lr.append(a_cosine_learning_rate(i, base_lr, warmup_steps, total_steps))
-    return lr
-``` 
-
-### 3.9 主函数训练
-主函数训练过程主要包括以下几步：
-- 选择运行设备GPU或者Ascend；
-- 调用create_dataset函数，创建dataloader；
-- 调用Unet3D函数，构建网络；
-- 定义损失函数，这里我们使用常见的dice loss和交叉熵损失（cross entropy loss）；
-- 调用学习率函数，设置优化器；
-- 设置网络为训练模式；
-- 使用for循环，不断将数据送入网络进行训练；
-- 通过MindSpore自己的可视化工具MindInsignt将loss_dice、loss_ce和loss_total进行可视化，横坐标表示训练的step，纵坐标表示损失大小  
-  运行Mindinsight：  
-  `mindinsight start --summary-base-dir ./summary_dir --port 1111`  
-
-![image](image/loss_dice.png)
-![image](image/loss_ce.png)
-![image](image/loss_total.png)
-
-```python
-import os
-import mindspore
-import mindspore.nn as nn
-from mindspore import ops
-from mindspore import SummaryRecord
-import mindspore.common.dtype as mstype
-from mindspore import Tensor, Model, context
-from mindspore.context import ParallelMode
-from mindspore.communication.management import init, get_rank, get_group_size
-from mindspore.train.loss_scale_manager import FixedLossScaleManager
-
-if config.device_target == 'Ascend':
-    device_id = int(os.getenv('DEVICE_ID'))
-    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False, \
-                        device_id=device_id)
-else:
-    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False)
-
-mindspore.set_seed(1)
-
-@moxing_wrapper()
-def train_net(run_distribute=False):
-    if run_distribute:
-        init()
-        if config.device_target == 'Ascend':
-            rank_id = get_device_id()
-            rank_size = get_device_num()
-        else:
-            rank_id = get_rank()
-            rank_size = get_group_size()
-        parallel_mode = ParallelMode.DATA_PARALLEL
-        context.set_auto_parallel_context(parallel_mode=parallel_mode,
-                                          device_num=rank_size,
-                                          gradients_mean=True)
-    else:
-        rank_id = 0
-        rank_size = 1
-    # (1) create dataloader
-    train_dataset = create_dataset(data_path=config.data_path + "/image/",
-                                   seg_path=config.data_path + "/seg/",
-                                   rank_size=rank_size,
-                                   rank_id=rank_id, is_training=True)
-    train_data_size = train_dataset.get_dataset_size()
-    print("train dataset length is:", train_data_size)
-    # (2) construct network
-    if config.device_target == 'Ascend':
-        network = UNet3d()
-    else:
-        network = UNet3d_()
-
-    # (3) define loss funtion
-    loss_ce_fn = nn.CrossEntropyLoss()
-    loss_dice_fn = nn.DiceLoss(smooth=1e-5)
-    # (4) lr shedule and optimizor
-    lr = Tensor(dynamic_lr(config, train_data_size), mstype.float32)
-    optimizer = nn.Adam(params=network.trainable_params(), learning_rate=lr)
-    # (5) set training mode
-    network.set_train()
-    # (6) Start training
-    print("============== Starting Training ==============")
-    def forward_fn(data, label):
-        logits = network(data)
-        loss_ce = loss_ce_fn(logits, label)
-        loss_dice = loss_dice_fn(logits, label)
-        loss = loss_dice + loss_ce
-        return loss, loss_dice, loss_ce, logits
-    # Get gradient function
-    grad_fn = ops.value_and_grad(forward_fn, None, optimizer.parameters, has_aux=True)
-    # Define function of one-step training
-    def train_step(data, label):
-        (loss, loss_dice, loss_ce, _), grads = grad_fn(data, label)
-        loss = ops.depend(loss, optimizer(grads))
-        return loss, loss_dice, loss_ce
-
-    with SummaryRecord('./summary_dir/summary_01') as summary_record:
-        for epoch in range(config.max_epoch):
-            for step, (data, label) in enumerate(train_dataset.create_tuple_iterator()):
-                loss, loss_dice, loss_ce = train_step(data, label)
-
-                current_step = epoch * train_data_size + step
-                current_lr = optimizer.get_lr()
-                summary_record.record(current_step)
-                summary_record.add_value('scalar', 'lr', current_lr)
-                summary_record.add_value('scalar', 'loss_total', loss)
-                summary_record.add_value('scalar', 'loss_dice', loss_dice)
-                summary_record.add_value('scalar', 'loss_ce', loss_ce)
-
-                loss, loss_dice, loss_ce = loss.asnumpy(), loss_dice.asnumpy(), loss_ce.asnumpy()
-                print("Epoch: %d [%d/%d] [%d/%d] lr:%.7f Loss: %.4f Loss_dice: %.4f Loss_ce: %.4f" %
-                      (epoch, step, train_data_size, current_step, train_data_size*config.max_epoch,
-                       current_lr, loss, loss_dice, loss_ce))
-                # Save checkpoint
-                ckpt_save_dir = os.path.join(config.output_path, config.checkpoint_path)
-                mindspore.save_checkpoint(network, os.path.join(ckpt_save_dir, "Epoch_"+str(epoch)+"_model.ckpt"))
-            print("Saved Model to {}/Epoch_{}_model.ckpt".format(ckpt_save_dir, epoch))
-
-    print("============== End Training ==============")
-
-if __name__ == '__main__':
-    train_net()
-```
-### 3.10 模型预测
-设置好测试数据集路径和加载模型路径，就可以开始测试啦！
-```python
-import os
-import numpy as np
-from mindspore import dtype as mstype
-from mindspore import Model, context, Tensor
-from mindspore.train.serialization import load_checkpoint, load_param_into_net
-
-config.device_target = "GPU"
-if config.device_target == 'Ascend':
-    device_id = int(os.getenv('DEVICE_ID'))
-    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False, \
-                        device_id=device_id)
-else:
-    context.set_context(mode=context.GRAPH_MODE, device_target=config.device_target, save_graphs=False)
-
-# @moxing_wrapper()
-def test_net(data_path, ckpt_path):
-    data_dir = data_path + "/image/"
-    seg_dir = data_path + "/seg/"
-    eval_dataset = create_dataset(data_path=data_dir, seg_path=seg_dir, is_training=False)
-    eval_data_size = eval_dataset.get_dataset_size()
-    print("test dataset length is:", eval_data_size)
-
-    metrics_score = {}
-    metrics_score["dice"] = 0
-    metrics_score["hd95"] = 0
-    metrics_score["jc"] = 0
-
-    if config.device_target == 'Ascend':
-        network = UNet3d()
-    else:
-        network = UNet3d_()
-    network.set_train(False)
-    param_dict = load_checkpoint(ckpt_path)
-    load_param_into_net(network, param_dict)
-    # metrics
-    results = {}
-    results["dice"] = 0
-    results["hd95"] = 0
-    results["jc"] = 0
-    results["asd"] = 0
-    results["sens"] = 0
-    model = Model(network)
-    index = 0
-    total_dice = 0
-    config.batch_size=1
-    for batch in eval_dataset.create_dict_iterator(num_epochs=1, output_numpy=True):
-        image = batch["image"]
-        seg = batch["seg"]
-        print("current image shape is {}".format(image.shape), flush=True)
-        sliding_window_list, slice_list = create_sliding_window(image, config.roi_size, config.overlap)
-        image_size = (config.batch_size, config.num_classes) + image.shape[2:]
-        output_image = np.zeros(image_size, np.float32)
-        count_map = np.zeros(image_size, np.float32)
-        importance_map = np.ones(config.roi_size, np.float32)
-        for window, slice_ in zip(sliding_window_list, slice_list):
-            window_image = Tensor(window, mstype.float32)
-            pred_probs = model.predict(window_image)
-            output_image[slice_] += pred_probs.asnumpy()
-            count_map[slice_] += importance_map
-        output_image = output_image / count_map
-        dice, hd95, jc, asd, sens = CalculateDice(output_image, seg)
-
-        print("The %d batch Dice: %.4f, HD95:%.4f, JC: %.4f, ASD: %.4f, Sens: %.4f"%(index, dice, hd95, jc, asd, sens))
-        total_dice += dice
-        results["dice"] += dice
-        results["hd95"] += hd95
-        results["jc"] += jc
-        results["asd"] += asd
-        results["sens"] += sens
-        index = index + 1
-    avg_dice = results["dice"] / eval_data_size
-    avg_hd95 = results["hd95"] / eval_data_size
-    avg_jc = results["jc"] / eval_data_size
-    avg_asd = results["asd"] / eval_data_size
-    avg_sens = results["sens"] / eval_data_size
-    print("**********************End Eval***************************************")
-    print("The average Dice: %.4f, HD95:%.4f, JC: %.4f, ASD: %.4f, Sens: %.4f" %
-          (avg_dice, avg_hd95, avg_jc, avg_asd, avg_sens))
-
-if __name__ == '__main__':
-    test_net(data_path="data/LUNA16/val/",
-             ckpt_path="./output/checkpoint/Epoch_9_model.ckpt")
+# Contents
+
+- [Contents](#contents)
+    - [Unet Description](#unet-description)
+    - [Model Architecture](#model-architecture)
+    - [Dataset](#dataset)
+    - [Environment Requirements](#environment-requirements)
+    - [Quick Start](#quick-start)
+    - [Script Description](#script-description)
+        - [Script and Sample Code](#script-and-sample-code)
+        - [Script Parameters](#script-parameters)
+    - [Training Process](#training-process)
+        - [Training](#training)
+            - [Training on Ascend](#training-on-ascend)
+            - [Training on GPU](#training-on-gpu)
+        - [Distributed Training](#distributed-training)
+            - [Distributed training on Ascend](#distributed-training-on-ascend)
+            - [Distributed training on GPU](#distributed-training-on-gpu)
+    - [Evaluation Process](#evaluation-process)
+        - [Evaluation](#evaluation)
+            - [Evaluating on Ascend](#evaluating-on-ascend)
+            - [Evaluating on GPU](#training-on-gpu)
+        - [ONNX Evaluation](#onnx-evaluation)
+    - [Inference Process](#inference-process)
+        - [Export MindIR](#export-mindir)
+        - [Infer on Ascend310](#infer-on-ascend310)
+        - [result](#result)
+    - [Model Description](#model-description)
+        - [Performance](#performance)
+            - [Evaluation Performance](#evaluation-performance)
+            - [Inference Performance](#inference-performance)
+- [Description of Random Situation](#description-of-random-situation)
+    - [ModelZoo Homepage](#modelzoo-homepage)
+
+## [](#contents)
+
+Unet3D model is widely used for 3D medical image segmentation. The construct of Unet3D network is similar to the Unet, the main difference is that Unet3D use 3D operations like Conv3D while Unet is anentirely 2D architecture. To know more information about Unet3D network, you can read the original paper Unet3D: Learning Dense VolumetricSegmentation from Sparse Annotation.
+
+## [Model Architecture](#contents)
+
+Unet3D model is created based on the previous Unet(2D), which includes an encoder part and a decoder part. The encoder part is used to analyze the whole picture and extract and analyze features, while the decoder part is to generate a segmented block image. In this model, we also add residual block in the base block to improve the network.
+
+## [Dataset](#contents)
+
+Dataset used: [LUNA16](https://luna16.grand-challenge.org/)
+
+- Description: The data is to automatically detect the location of nodules from volumetric CT images. 888 CT scans from LIDC-IDRI database are provided. The complete dataset is divided into 10 subsets that should be used for the 10-fold cross-validation. All subsets are available as compressed zip files.
+
+- Dataset size：887
+    - Train：877 images
+    - Test：10 images(last 10 images in subset9 with lexicographical order)
+- Data format：zip
+    - Note：Data will be processed in convert_nifti.py, and one of them will be ignored during data processing.
+- Data Content Structure
+
+```text
+
+.
+└─LUNA16
+  ├── train
+  │   ├── image         // contains 877 image files
+  |   ├── seg           // contains 877 seg files
+  ├── val
+  │   ├── image         // contains 10 image files
+  |   ├── seg           // contains 10 seg files
 ```
 
+## [Environment Requirements](#contents)
 
+- Hardware（Ascend or GPU）
+    - Prepare hardware environment with Ascend or GPU.
+- Framework
+    - [MindSpore](https://www.mindspore.cn/install/en)
+- For more information, please check the resources below：
+    - [MindSpore Tutorials](https://www.mindspore.cn/tutorials/en/master/index.html)
+    - [MindSpore Python API](https://www.mindspore.cn/docs/en/master/index.html)
+
+## [Quick Start](#contents)
+
+After installing MindSpore via the official website, you can start training and evaluation as follows:
+
+- Select the network and dataset to use
+
+```shell
+
+Convert dataset into mifti format.
+python ./src/convert_nifti.py --data_path=/path/to/input_image/ --output_path=/path/to/output_image/
+
+```
+
+Refer to `default_config.yaml`. We support some parameter configurations for quick start.
+
+- Run on Ascend
+
+```python
+
+# run training example
+python train.py --data_path=/path/to/data/ > train.log 2>&1 &
+
+# run distributed training example
+bash scripts/run_distribute_train.sh [RANK_TABLE_FILE] [DATA_PATH]
+
+# run evaluation example
+python eval.py --data_path=/path/to/data/ --checkpoint_file_path=/path/to/checkpoint/ > eval.log 2>&1 &
+```
+
+- Run on GPU
+
+```shell
+# enter scripts directory
+cd scripts
+# run training example(fp32)
+bash ./run_standalone_train_gpu_fp32.sh [TRAINING_DATA_PATH]
+# run training example(fp16)
+bash ./run_standalone_train_gpu_fp16.sh [TRAINING_DATA_PATH]
+# run distributed training example(fp32)
+bash ./run_distribute_train_gpu_fp32.sh [TRAINING_DATA_PATH]
+# run distributed training example(fp16)
+bash ./run_distribute_train_gpu_fp16.sh [TRAINING_DATA_PATH]
+# run evaluation example(fp32)
+bash ./run_standalone_eval_gpu_fp32.sh [VALIDATING_DATA_PATH] [CHECKPOINT_FILE_PATH]
+# run evaluation example(fp16)
+bash ./run_standalone_eval_gpu_fp16.sh [VALIDATING_DATA_PATH] [CHECKPOINT_FILE_PATH]
+
+```
+
+If you want to run in modelarts, please check the official documentation of [modelarts](https://support.huaweicloud.com/modelarts/), and you can start training and evaluation as follows:
+
+```python
+# run distributed training on modelarts example
+# (1) First, Perform a or b.
+#       a. Set "enable_modelarts=True" on yaml file.
+#          Set other parameters on yaml file you need.
+#       b. Add "enable_modelarts=True" on the website UI interface.
+#          Add other parameters on the website UI interface.
+# (2) Download nibabel and set pip-requirements.txt to code directory
+# (3) Set the code directory to "/path/unet3d" on the website UI interface.
+# (4) Set the startup file to "train.py" on the website UI interface.
+# (5) Set the "Dataset path" and "Output file path" and "Job log path" to your path on the website UI interface.
+# (6) Create your job.
+
+# run evaluation on modelarts example
+# (1) Copy or upload your trained model to S3 bucket.
+# (2) Perform a or b.
+#       a. Set "enable_modelarts=True" on yaml file.
+#          Set "checkpoint_file_path='/cache/checkpoint_path/model.ckpt'" on yaml file.
+#          Set "checkpoint_url=/The path of checkpoint in S3/" on yaml file.
+#       b. Add "enable_modelarts=True" on the website UI interface.
+#          Add "checkpoint_file_path='/cache/checkpoint_path/model.ckpt'" on the website UI interface.
+#          Add "checkpoint_url=/The path of checkpoint in S3/" on the website UI interface.
+# (3) Download nibabel and set pip-requirements.txt to code directory
+# (4) Set the code directory to "/path/unet3d" on the website UI interface.
+# (5) Set the startup file to "eval.py" on the website UI interface.
+# (6) Set the "Dataset path" and "Output file path" and "Job log path" to your path on the website UI interface.
+# (7) Create your job.
+```
+
+## [Script Description](#contents)
+
+### [Script and Sample Code](#contents)
+
+```text
+
+.
+└─unet3d
+  ├── README.md                                 // descriptions about Unet3D
+  ├── scripts
+  │   ├──run_distribute_train.sh                // shell script for distributed on Ascend
+  │   ├──run_standalone_train.sh                // shell script for standalone on Ascend
+  │   ├──run_standalone_eval.sh                 // shell script for evaluation on Ascend
+  │   ├──run_distribute_train_gpu_fp32.sh       // shell script for distributed on GPU fp32
+  │   ├──run_distribute_train_gpu_fp16.sh       // shell script for distributed on GPU fp16
+  │   ├──run_standalone_train_gpu_fp32.sh       // shell script for standalone on GPU fp32
+  │   ├──run_standalone_train_gpu_fp16.sh       // shell script for standalone on GPU fp16
+  │   ├──run_standalone_eval_gpu_fp32.sh        // shell script for evaluation on GPU fp32
+  │   ├──run_standalone_eval_gpu_fp16.sh        // shell script for evaluation on GPU fp16
+  │   ├──run_eval_onnx.sh                       // shell script for ONNX evaluation
+  ├── src
+  │   ├──dataset.py                             // creating dataset
+  │   ├──lr_schedule.py                         // learning rate scheduler
+  │   ├──transform.py                           // handle dataset
+  │   ├──convert_nifti.py                       // convert dataset
+  │   ├──loss.py                                // loss
+  │   ├──utils.py                               // General components (callback function)
+  │   ├──unet3d_model.py                        // Unet3D model
+  │   ├──unet3d_parts.py                        // Unet3D part
+          ├── model_utils
+          │   ├──config.py                      // parameter configuration
+          │   ├──device_adapter.py              // device adapter
+          │   ├──local_adapter.py               // local adapter
+          │   ├──moxing_adapter.py              // moxing adapter
+  ├── default_config.yaml                       // parameter configuration
+  ├── train.py                                  // training script
+  ├── eval.py                                   // evaluation script
+  ├── eval_onnx.py                              // ONNX evaluation script
+
+```
+
+### [Script Parameters](#contents)
+
+Parameters for both training and evaluation can be set in config.py
+
+- config for Unet3d, luna16 dataset
+
+```python
+
+  'model': 'Unet3d',                  # model name
+  'lr': 0.0005,                       # learning rate
+  'epochs': 10,                       # total training epochs when run 1p
+  'batchsize': 1,                     # training batch size
+  "warmup_step": 120,                 # warmp up step in lr generator
+  "warmup_ratio": 0.3,                # warpm up ratio
+  'num_classes': 4,                   # the number of classes in the dataset
+  'in_channels': 1,                   # the number of channels
+  'keep_checkpoint_max': 5,           # only keep the last keep_checkpoint_max checkpoint
+  'loss_scale': 256.0,                # loss scale
+  'roi_size': [224, 224, 96],         # random roi size
+  'overlap': 0.25,                    # overlap rate
+  'min_val': -500,                    # intersity original range min
+  'max_val': 1000,                    # intersity original range max
+  'upper_limit': 5                    # upper limit of num_classes
+  'lower_limit': 3                    # lower limit of num_classes
+
+```
+
+## [Training Process](#contents)
+
+### Training
+
+#### Training on GPU
+
+```shell
+# enter scripts directory
+cd scripts
+# fp32
+bash ./run_standalone_train_gpu_fp32.sh /path_prefix/LUNA16/train
+# fp16
+bash ./run_standalone_train_gpu_fp16.sh /path_prefix/LUNA16/train
+
+```
+
+The python command above will run in the background, you can view the results through the file `train.log`.
+
+After training, you'll get some checkpoint files under the train_fp[32|16]/output/ckpt_0/ folder by default.
+
+#### Training on Ascend
+
+```shell
+python train.py --data_path=/path/to/data/ > train.log 2>&1 &
+
+```
+
+The python command above will run in the background, you can view the results through the file `train.log`.
+
+After training, you'll get some checkpoint files under the script folder by default. The loss value will be achieved as follows:
+
+```shell
+
+epoch: 1 step: 878, loss is 0.55011123
+epoch time: 1443410.353 ms, per step time: 1688.199 ms
+epoch: 2 step: 878, loss is 0.58278626
+epoch time: 1172136.839 ms, per step time: 1370.920 ms
+epoch: 3 step: 878, loss is 0.43625978
+epoch time: 1135890.834 ms, per step time: 1328.537 ms
+epoch: 4 step: 878, loss is 0.06556784
+epoch time: 1180467.795 ms, per step time: 1380.664 ms
+
+```
+
+### Distributed Training
+
+#### Distributed training on GPU(8P)
+
+```shell
+# enter scripts directory
+cd scripts
+# fp32
+bash ./run_distribute_train_gpu_fp32.sh /path_prefix/LUNA16/train
+# fp16
+bash ./run_distribute_train_gpu_fp16.sh /path_prefix/LUNA16/train
+
+```
+
+The above shell script will run distribute training in the background. You can view the results through the file `/train_parallel_fp[32|16]/train.log`.
+
+After training, you'll get some checkpoint files under the `train_parallel_fp[32|16]/output/ckpt_[X]/` folder by default.
+
+#### Distributed training on Ascend
+
+> Notes:
+> RANK_TABLE_FILE can refer to [Link](https://www.mindspore.cn/tutorials/experts/en/master/parallel/train_ascend.html) , and the device_ip can be got as [Link](https://gitee.com/mindspore/models/tree/master/utils/hccl_tools). For large models like InceptionV4, it's better to export an external environment variable `export HCCL_CONNECT_TIMEOUT=600` to extend hccl connection checking time from the default 120 seconds to 600 seconds. Otherwise, the connection could be timeout since compiling time increases with the growth of model size.
+>
+
+```shell
+
+bash scripts/run_distribute_train.sh [RANK_TABLE_FILE] [IMAGE_PATH] [SEG_PATH]
+
+```
+
+The above shell script will run distribute training in the background. You can view the results through the file `/train_parallel[X]/log.txt`. The loss value will be achieved as follows:
+
+```shell
+
+epoch: 1 step: 110, loss is 0.8294426
+epoch time: 468891.643 ms, per step time: 4382.165 ms
+epoch: 2 step: 110, loss is 0.58278626
+epoch time: 165469.201 ms, per step time: 1546.441 ms
+epoch: 3 step: 110, loss is 0.43625978
+epoch time: 158915.771 ms, per step time: 1485.194 ms
+...
+epoch: 9 step: 110, loss is 0.016280059
+epoch time: 172815.179 ms, per step time: 1615.095 ms
+epoch: 10 step: 110, loss is 0.020185348
+epoch time: 140476.520 ms, per step time: 1312.865 ms
+
+```
+
+## [Evaluation Process](#contents)
+
+### Evaluation
+
+#### Evaluating on GPU
+
+```shell
+# enter scripts directory
+cd ./script
+# fp32, 1gpu
+bash ./run_standalone_eval_gpu_fp32.sh /path_prefix/LUNA16/val /path_prefix/train_fp32/output/ckpt_0/Unet3d-10_877.ckpt
+# fp16, 1gpu
+bash ./run_standalone_eval_gpu_fp16.sh /path_prefix/LUNA16/val /path_prefix/train_fp16/output/ckpt_0/Unet3d-10_877.ckpt
+# fp32, 8gpu
+bash ./run_standalone_eval_gpu_fp32.sh /path_prefix/LUNA16/val /path_prefix/train_parallel_fp32/output/ckpt_0/Unet3d-10_110.ckpt
+# fp16, 8gpu
+bash ./run_standalone_eval_gpu_fp16.sh /path_prefix/LUNA16/val /path_prefix/train_parallel_fp16/output/ckpt_0/Unet3d-10_110.ckpt
+
+```
+
+#### Evaluating on Ascend
+
+- evaluation on dataset when running on Ascend
+
+Before running the command below, please check the checkpoint path used for evaluation. Please set the checkpoint path to be the absolute full path, e.g., "username/unet3d/Unet3d-10_110.ckpt".
+
+```shell
+python eval.py --data_path=/path/to/data/ --checkpoint_file_path=/path/to/checkpoint/ > eval.log 2>&1 &
+
+```
+
+The above python command will run in the background. You can view the results through the file "eval.log". The accuracy of the test dataset will be as follows:
+
+```shell
+
+# grep "eval average dice is:" eval.log
+eval average dice is 0.9502010010453671
+
+```
+
+### ONNX Evaluation
+
+- Export your model to ONNX
+
+  ```shell
+  python export.py --ckpt_file /path/to/checkpoint.ckpt --file_name /path/to/exported.onnx --file_format ONNX --device_target GPU
+  ```
+
+- Run ONNX evaluation
+
+  ```shell
+  python eval_onnx.py --file_name /path/to/exported.onnx --data_path /path/to/data/ --device_target GPU > output.eval_onnx.log 2>&1 &
+  ```
+
+- The above python command will run in the background, you can view the results through the file output.eval_onnx.log. You will get the accuracy as following:
+
+  ```log
+  average dice: 0.9646
+  ```
+
+## Inference Process
+
+### [Export MindIR](#contents)
+
+```shell
+python export.py --ckpt_file [CKPT_PATH] --file_name [FILE_NAME] --file_format [FILE_FORMAT]
+```
+
+The ckpt_file parameter is required,
+`file_format` should be in ["AIR", "MINDIR"]
+
+### Infer on Ascend310
+
+Before performing inference, the mindir file must be exported by `export.py` script. We only provide an example of inference using MINDIR model.
+
+```shell
+# Ascend310 inference
+bash run_infer_310.sh [MINDIR_PATH] [NEED_PREPROCESS] [DEVICE_ID]
+```
+
+- `NEED_PREPROCESS` means weather need preprocess or not, it's value is 'y' or 'n'.
+- `DEVICE_ID` is optional, default value is 0.
+
+### result
+
+Inference result is saved in current path, you can find result like this in acc.log file.
+
+```shell
+
+# grep "eval average dice is:" acc.log
+eval average dice is 0.9502010010453671
+
+```
+
+## [Model Description](#contents)
+
+### [Performance](#contents)
+
+#### Training Performance
+
+| Parameters          | Ascend                                                    |     GPU                                              |
+| ------------------- | --------------------------------------------------------- | ---------------------------------------------------- |
+| Model Version       | Unet3D                                                    | Unet3D                                               |
+| Resource            |  Ascend 910; CPU 2.60GHz, 192cores; Memory 755G; OS Euler2.8 | Nvidia V100 SXM2; CPU 1.526GHz; 72cores; Memory 42G; OS Ubuntu16|
+| uploaded Date       | 03/18/2021 (month/day/year)                               | 05/21/2021(month/day/year)                           |
+| MindSpore Version   | 1.2.0                                                     | 1.2.0                                                |
+| Dataset             | LUNA16                                                    | LUNA16                                               |
+| Training Parameters | epoch = 10,  batch_size = 1                               | epoch = 10,  batch_size = 1                          |
+| Optimizer           | Adam                                                      | Adam                                                 |
+| Loss Function       | SoftmaxCrossEntropyWithLogits                             | SoftmaxCrossEntropyWithLogits                        |
+| Speed               | 8pcs: 1795ms/step                                         | 8pcs: 1883ms/step                                    |
+| Total time          | 8pcs: 0.62hours                                           | 8pcs: 0.66hours                                      |
+| Parameters (M)      | 34                                                        | 34                                                   |
+| Scripts             | [unet3d script](https://gitee.com/mindspore/models/tree/master/official/cv/unet3d) |
+
+#### Inference Performance
+
+| Parameters          | Ascend                      | GPU                         | Ascend310                   |
+| ------------------- | --------------------------- | --------------------------- | --------------------------- |
+| Model Version       | Unet3D                      | Unet3D                      | Unet3D                      |
+| Resource            | Ascend 910; OS Euler2.8     | Nvidia V100 SXM2; OS Ubuntu16| Ascend 310; OS Euler2.8    |
+| Uploaded Date       | 03/18/2021 (month/day/year) | 05/21/2021 (month/day/year) | 12/15/2021 (month/day/year) |
+| MindSpore Version   | 1.2.0                       | 1.2.0                       | 1.5.0                       |
+| Dataset             | LUNA16                      | LUNA16                      | LUNA16                      |
+| batch_size          | 1                           | 1                           | 1                           |
+| Dice                | dice = 0.93                 | dice = 0.93                 | dice = 0.93                 |
+| Model for inference | 56M(.ckpt file)             | 56M(.ckpt file)             | 56M(.ckpt file)             |
+
+# [Description of Random Situation](#contents)
+
+We set seed to 1 in train.py.
+
+## [ModelZoo Homepage](#contents)
+
+Please check the official [homepage](https://gitee.com/mindspore/models).
