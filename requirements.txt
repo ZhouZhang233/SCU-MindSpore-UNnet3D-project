@@ -1,7 +1,0 @@
-numpy
-nibabel
-pyyaml
-SimpleITK
-onnxruntime-gpu
-medpy
-
