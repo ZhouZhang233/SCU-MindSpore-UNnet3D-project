@@ -258,7 +258,7 @@ $$
 （2）杰卡德系数（Jaccard coefficient，JC）又叫做交并比（Interaction of Union，IoU），定义为点集A和和点集B的交集和并集的比值。计算公式为：
 
 $$
-\text {JC}=\frac{2|A \cap B|}{A \cup B}
+\text {JC}=\frac{|A \cap B|}{|A \cup B|}
 $$
 
 (3)豪斯多夫距离（Hausdorff distance 95）是描述两组点集之间相似程度的一种量度，Dice对mask的内部填充比较敏感，而Hausdorff distance 对分割出的边界比较敏感，点集A和点集B的HD定义为：
