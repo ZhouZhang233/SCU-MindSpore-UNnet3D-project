@@ -268,7 +268,7 @@ $$
 $$
 
 $$
-\text {h(A, B)}=\max_{a\in A}(\min_{b\in B}\left\| a-b \right\|)
+\text {h(A, B)}=\max_{a\in A}(\min_{b\in B}\left\‖ a-b \right\‖)
 $$
 
 ‖·‖是点集A和点集B间的距离范式
