@@ -271,7 +271,7 @@ $$
 \text {h(A, B)}=\max_{a\in A}(\min_{b\in B}\left\| a-b \right\|)
 $$
 
-|·|是点集A和点集B间的距离范式
+|·|是点集A和点集B间的距离
 
 （4）平均表面距离（Average surface distance，ASD）指的是P中所有点的表面距离的平均，计算公式为：
 
